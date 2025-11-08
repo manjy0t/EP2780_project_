@@ -1,0 +1,1440 @@
+<!DOCTYPE html>
+<html lang="en">
+<head>
+    <meta charset="UTF-8">
+    <meta name="viewport" content="width=device-width, initial-scale=1.0">
+    <title>EXIF Forensics Tool - Metadata Analysis & Reverse Image Search</title>
+    <link rel="stylesheet" href="https://unpkg.com/leaflet@1.9.4/dist/leaflet.css" />
+    <script src="https://unpkg.com/leaflet@1.9.4/dist/leaflet.js"></script>
+    <script src="https://cdnjs.cloudflare.com/ajax/libs/exif-js/2.3.0/exif.min.js"></script>
+    <script src="https://cdn.jsdelivr.net/npm/@tensorflow/tfjs@4.11.0"></script>
+    <script src="https://cdn.jsdelivr.net/npm/@tensorflow-models/mobilenet@2.1.0"></script>
+    <style>
+        * {
+            margin: 0;
+            padding: 0;
+            box-sizing: border-box;
+        }
+
+        body {
+            font-family: -apple-system, BlinkMacSystemFont, 'Segoe UI', Roboto, Oxygen, Ubuntu, Cantarell, sans-serif;
+            background: linear-gradient(135deg, #667eea 0%, #764ba2 100%);
+            min-height: 100vh;
+            padding: 20px;
+        }
+
+        .container {
+            max-width: 1400px;
+            margin: 0 auto;
+            background: white;
+            border-radius: 12px;
+            box-shadow: 0 20px 60px rgba(0,0,0,0.3);
+            overflow: hidden;
+        }
+
+        .header {
+            background: linear-gradient(135deg, #667eea 0%, #764ba2 100%);
+            color: white;
+            padding: 30px;
+            text-align: center;
+        }
+
+        .header h1 {
+            font-size: 2em;
+            margin-bottom: 10px;
+        }
+
+        .header p {
+            opacity: 0.9;
+            font-size: 1.1em;
+        }
+
+        .content {
+            display: grid;
+            grid-template-columns: 1fr 1fr;
+            gap: 20px;
+            padding: 30px;
+        }
+
+        .upload-section {
+            grid-column: 1 / -1;
+        }
+
+        .upload-area {
+            border: 3px dashed #667eea;
+            border-radius: 8px;
+            padding: 40px;
+            text-align: center;
+            background: #f8f9ff;
+        }
+
+        .upload-area input[type="file"] {
+            display: block;
+            margin: 20px auto;
+            padding: 10px 20px;
+            background: #667eea;
+            color: white;
+            border: none;
+            border-radius: 6px;
+            cursor: pointer;
+            font-size: 1em;
+        }
+
+        .stats-panel {
+            background: #f8f9ff;
+            padding: 20px;
+            border-radius: 8px;
+            border-left: 4px solid #667eea;
+        }
+
+        .stats-panel h3 {
+            color: #667eea;
+            margin-bottom: 15px;
+            font-size: 1.3em;
+        }
+
+        .stat-item {
+            display: flex;
+            justify-content: space-between;
+            padding: 8px 0;
+            border-bottom: 1px solid #e0e0e0;
+        }
+
+        .stat-item:last-child {
+            border-bottom: none;
+        }
+
+        .stat-label {
+            font-weight: 500;
+            color: #555;
+        }
+
+        .stat-value {
+            font-weight: 700;
+            color: #667eea;
+        }
+
+        .anomalies-panel {
+            background: #fff8f0;
+            padding: 20px;
+            border-radius: 8px;
+            border-left: 4px solid #ff9800;
+        }
+
+        .anomalies-panel h3 {
+            color: #ff9800;
+            margin-bottom: 15px;
+            font-size: 1.3em;
+        }
+
+        .anomaly-item {
+            background: white;
+            padding: 12px;
+            margin-bottom: 10px;
+            border-radius: 6px;
+            border-left: 3px solid #ff9800;
+        }
+
+        .anomaly-type {
+            font-weight: 600;
+            color: #ff9800;
+            margin-bottom: 5px;
+        }
+
+        .anomaly-desc {
+            color: #666;
+            font-size: 0.9em;
+        }
+
+        #map {
+            height: 500px;
+            border-radius: 8px;
+            grid-column: 1 / -1;
+            box-shadow: 0 4px 12px rgba(0,0,0,0.1);
+        }
+
+        .image-list {
+            grid-column: 1 / -1;
+            max-height: 400px;
+            overflow-y: auto;
+            background: #f8f9ff;
+            padding: 20px;
+            border-radius: 8px;
+        }
+
+        .image-item {
+            background: white;
+            padding: 15px;
+            margin-bottom: 10px;
+            border-radius: 6px;
+            display: grid;
+            grid-template-columns: auto 1fr;
+            gap: 15px;
+            box-shadow: 0 2px 6px rgba(0,0,0,0.05);
+        }
+
+        .image-thumb {
+            width: 80px;
+            height: 80px;
+            object-fit: cover;
+            border-radius: 4px;
+        }
+
+        .image-details {
+            font-size: 0.9em;
+        }
+
+        .image-details div {
+            margin-bottom: 5px;
+        }
+
+        .label {
+            font-weight: 600;
+            color: #667eea;
+            margin-right: 8px;
+        }
+
+        .buttons {
+            grid-column: 1 / -1;
+            display: flex;
+            gap: 15px;
+            justify-content: center;
+        }
+
+        .btn {
+            padding: 12px 30px;
+            border: none;
+            border-radius: 6px;
+            font-size: 1em;
+            font-weight: 600;
+            cursor: pointer;
+            transition: all 0.3s;
+        }
+
+        .btn-primary {
+            background: linear-gradient(135deg, #667eea 0%, #764ba2 100%);
+            color: white;
+        }
+
+        .btn-primary:hover {
+            transform: translateY(-2px);
+            box-shadow: 0 8px 20px rgba(102, 126, 234, 0.4);
+        }
+
+        .btn-secondary {
+            background: #f0f2ff;
+            color: #667eea;
+        }
+
+        .btn-secondary:hover {
+            background: #e8ebff;
+        }
+
+        .hidden {
+            display: none;
+        }
+
+        .warning {
+            color: #ff9800;
+            font-weight: 600;
+        }
+
+        .success {
+            color: #4caf50;
+            font-weight: 600;
+        }
+
+        .reverse-search-box {
+            margin-top: 10px;
+            padding: 10px;
+            background: #fff3cd;
+            border-radius: 4px;
+            border-left: 3px solid #ffc107;
+        }
+    </style>
+</head>
+<body>
+    <div class="container">
+        <div class="header">
+            <h1>🔍 EXIF Data Extractor & Mapper</h1>
+            <p>Complete Digital Forensics Tool - Metadata Analysis, Geographic Clustering & Reverse Image Search</p>
+        </div>
+
+        <div class="content">
+            <div class="upload-section">
+                <div class="upload-area" id="uploadArea">
+                    <h2>📁 Upload Images</h2>
+                    <p>Click the button below to select multiple image files</p>
+                    <input type="file" id="fileInput" multiple accept="image/jpeg,image/jpg,image/png">
+                    <p style="margin-top: 10px; font-size: 0.9em; color: #666;">Supports: JPG, JPEG, PNG</p>
+                </div>
+            </div>
+
+            <div class="stats-panel" id="statsPanel" style="display: none;">
+                <h3>📊 Statistics Summary</h3>
+                <div class="stat-item">
+                    <span class="stat-label">Total Images:</span>
+                    <span class="stat-value" id="totalImages">0</span>
+                </div>
+                <div class="stat-item">
+                    <span class="stat-label">With GPS Data:</span>
+                    <span class="stat-value" id="gpsCount">0</span>
+                </div>
+                <div class="stat-item">
+                    <span class="stat-label">Unique Devices:</span>
+                    <span class="stat-value" id="deviceCount">0</span>
+                </div>
+                <div class="stat-item">
+                    <span class="stat-label">Date Range:</span>
+                    <span class="stat-value" id="dateRange">-</span>
+                </div>
+                <div class="stat-item">
+                    <span class="stat-label">Anomalies Found:</span>
+                    <span class="stat-value warning" id="anomalyCount">0</span>
+                </div>
+            </div>
+
+            <div class="anomalies-panel" id="anomaliesPanel" style="display: none;">
+                <h3>⚠️ Anomalies Detected</h3>
+                <div id="anomaliesList"></div>
+            </div>
+
+            <div id="map" class="hidden"></div>
+
+            <div class="image-list hidden" id="imageList">
+                <h3 style="margin-bottom: 15px; color: #667eea;">📷 Analyzed Images</h3>
+                <div id="imageListContent"></div>
+            </div>
+
+            <div class="buttons hidden" id="actionButtons">
+                <button class="btn btn-primary" onclick="generateReport()">📄 Generate Report</button>
+                <button class="btn btn-secondary" onclick="exportData()">💾 Export JSON</button>
+                <button class="btn btn-secondary" onclick="exportCSV()">📊 Export CSV</button>
+                <button class="btn btn-secondary" onclick="reset()">🔄 Reset</button>
+            </div>
+        </div>
+    </div>
+
+    <script>
+        let processedImages = [];
+        let map = null;
+        let markers = [];
+
+        let mobileNetModel = null;
+        let imageFeatures = [];
+        let imageClusters = [];
+
+        const fileInput = document.getElementById('fileInput');
+
+        async function loadMobileNet() {
+            console.log('Loading MobileNet model for AI clustering...');
+            try {
+                mobileNetModel = await mobilenet.load();
+                console.log('✅ MobileNet loaded successfully!');
+                return true;
+            } catch (error) {
+                console.error('Failed to load MobileNet:', error);
+                return false;
+            }
+        }
+
+        async function extractImageFeatures(img) {
+            if (!mobileNetModel) await loadMobileNet();
+
+            try {
+                const imgElement = new Image();
+                imgElement.src = img.dataUrl;
+
+                await new Promise((resolve, reject) => {
+                    imgElement.onload = resolve;
+                    imgElement.onerror = reject;
+                });
+
+                const features = await mobileNetModel.infer(imgElement, true);
+                return features.arraySync()[0];
+            } catch (error) {
+                console.error('Error extracting features:', error);
+                return null;
+            }
+        }
+
+        function cosineSimilarity(vecA, vecB) {
+            if (!vecA || !vecB || vecA.length !== vecB.length) return 0;
+
+            let dotProduct = 0;
+            let normA = 0;
+            let normB = 0;
+
+            for (let i = 0; i < vecA.length; i++) {
+                dotProduct += vecA[i] * vecB[i];
+                normA += vecA[i] * vecA[i];
+                normB += vecB[i] * vecB[i];
+            }
+
+            if (normA === 0 || normB === 0) return 0;
+            return dotProduct / (Math.sqrt(normA) * Math.sqrt(normB));
+        }
+
+        function clusterImagesBySimilarity(threshold = 0.65) {
+            if (imageFeatures.length === 0) return [];
+
+            const clusters = [];
+            const assigned = new Array(imageFeatures.length).fill(false);
+
+            for (let i = 0; i < imageFeatures.length; i++) {
+                if (assigned[i]) continue;
+
+                const cluster = {
+                    id: clusters.length,
+                    images: [i],
+                    centroid: imageFeatures[i]
+                };
+                assigned[i] = true;
+
+                for (let j = i + 1; j < imageFeatures.length; j++) {
+                    if (assigned[j]) continue;
+
+                    const similarity = cosineSimilarity(imageFeatures[i], imageFeatures[j]);
+                    if (similarity >= threshold) {
+                        cluster.images.push(j);
+                        assigned[j] = true;
+                    }
+                }
+
+                clusters.push(cluster);
+            }
+
+            return clusters;
+        }
+
+        function getClusterColor(clusterId) {
+            const colors = [
+                '#667eea', '#f093fb', '#4facfe', '#43e97b', '#fa709a',
+                '#fee140', '#30cfd0', '#a8edea', '#ffd89b', '#19d4ae',
+                '#ff6b6b', '#4ecdc4', '#45b7d1', '#f7b733', '#fc5c65'
+            ];
+            return colors[clusterId % colors.length];
+        }
+
+        async function performAIClustering() {
+            const statsPanel = document.getElementById('statsPanel');
+            const loadingDiv = document.createElement('div');
+            loadingDiv.id = 'clusteringLoading';
+            loadingDiv.className = 'stat-item';
+            loadingDiv.innerHTML = '<span class="stat-label">🤖 AI Clustering:</span><span class="stat-value">Loading model...</span>';
+            statsPanel.appendChild(loadingDiv);
+
+            try {
+                if (!mobileNetModel) {
+                    await loadMobileNet();
+                }
+
+                loadingDiv.innerHTML = '<span class="stat-label">🤖 AI Clustering:</span><span class="stat-value">Analyzing images...</span>';
+
+                imageFeatures = [];
+                for (let i = 0; i < processedImages.length; i++) {
+                    const features = await extractImageFeatures(processedImages[i]);
+                    imageFeatures.push(features);
+                }
+
+                loadingDiv.innerHTML = '<span class="stat-label">🤖 AI Clustering:</span><span class="stat-value">Clustering...</span>';
+
+                imageClusters = clusterImagesBySimilarity(0.65);
+
+                loadingDiv.innerHTML = '<span class="stat-label">🤖 AI Clusters Found:</span><span class="stat-value success">' + imageClusters.length + '</span>';
+
+                console.log('Clustering complete:', imageClusters);
+            } catch (error) {
+                console.error('Clustering error:', error);
+                loadingDiv.innerHTML = '<span class="stat-label">🤖 AI Clustering:</span><span class="stat-value warning">Not available</span>';
+            }
+        }
+
+        function displayClusters() {
+            if (imageClusters.length === 0) return;
+
+            const imageList = document.getElementById('imageList');
+
+            const clustersSection = document.createElement('div');
+            clustersSection.style.gridColumn = '1 / -1';
+            clustersSection.style.marginBottom = '20px';
+
+            let clustersHtml = '<div style="background: linear-gradient(135deg, #667eea 0%, #764ba2 100%); padding: 20px; border-radius: 8px; color: white; margin-bottom: 20px;">';
+            clustersHtml += '<h3 style="margin: 0 0 15px 0; color: white;">🤖 AI-Powered Visual Similarity Clusters</h3>';
+            clustersHtml += '<p style="margin: 0; opacity: 0.95; font-size: 0.95em;">Images automatically grouped by visual similarity using MobileNet CNN</p>';
+            clustersHtml += '</div>';
+
+            const singletons = imageClusters.filter(c => c.images.length === 1).length;
+            const multiImageClusters = imageClusters.filter(c => c.images.length > 1).length;
+
+            clustersHtml += '<div style="display: grid; grid-template-columns: repeat(auto-fit, minmax(200px, 1fr)); gap: 15px; margin-bottom: 20px;">';
+            clustersHtml += '<div style="background: #e8f5e9; padding: 15px; border-radius: 8px; border-left: 4px solid #4caf50;">';
+            clustersHtml += '<div style="font-size: 2em; font-weight: bold; color: #4caf50;">' + imageClusters.length + '</div>';
+            clustersHtml += '<div style="color: #666; font-size: 0.9em;">Total Clusters</div>';
+            clustersHtml += '</div>';
+
+            clustersHtml += '<div style="background: #fff3cd; padding: 15px; border-radius: 8px; border-left: 4px solid #ff9800;">';
+            clustersHtml += '<div style="font-size: 2em; font-weight: bold; color: #ff9800;">' + multiImageClusters + '</div>';
+            clustersHtml += '<div style="color: #666; font-size: 0.9em;">Similar Groups</div>';
+            clustersHtml += '</div>';
+
+            clustersHtml += '<div style="background: #f0f2ff; padding: 15px; border-radius: 8px; border-left: 4px solid #667eea;">';
+            clustersHtml += '<div style="font-size: 2em; font-weight: bold; color: #667eea;">' + singletons + '</div>';
+            clustersHtml += '<div style="color: #666; font-size: 0.9em;">Unique Images</div>';
+            clustersHtml += '</div>';
+            clustersHtml += '</div>';
+
+            imageClusters.forEach((cluster, clusterIdx) => {
+                const clusterColor = getClusterColor(cluster.id);
+
+                if (cluster.images.length > 1) {
+                    clustersHtml += '<div style="background: white; padding: 20px; border-radius: 8px; margin-bottom: 15px; border-left: 5px solid ' + clusterColor + ';">';
+                    clustersHtml += '<div style="display: flex; align-items: center; margin-bottom: 15px;">';
+                    clustersHtml += '<div style="width: 40px; height: 40px; background: ' + clusterColor + '; border-radius: 50%; display: flex; align-items: center; justify-content: center; color: white; font-weight: bold; margin-right: 15px;">C' + (cluster.id + 1) + '</div>';
+                    clustersHtml += '<div>';
+                    clustersHtml += '<h4 style="margin: 0; color: #333;">Cluster ' + (cluster.id + 1) + ': Visually Similar Images</h4>';
+                    clustersHtml += '<small style="color: #666;">' + cluster.images.length + ' images grouped together</small>';
+                    clustersHtml += '</div></div>';
+
+                    clustersHtml += '<div style="display: grid; grid-template-columns: repeat(auto-fill, minmax(120px, 1fr)); gap: 10px;">';
+
+                    cluster.images.forEach(imgIdx => {
+                        const img = processedImages[imgIdx];
+                        clustersHtml += '<div style="text-align: center; padding: 10px; background: #f8f9ff; border-radius: 6px;">';
+                        clustersHtml += '<img src="' + img.dataUrl + '" style="width: 100%; height: 100px; object-fit: cover; border-radius: 4px; margin-bottom: 8px;">';
+                        clustersHtml += '<div style="font-size: 0.85em; font-weight: 600; color: #667eea; overflow: hidden; text-overflow: ellipsis; white-space: nowrap;">' + img.filename + '</div>';
+                        clustersHtml += '</div>';
+                    });
+
+                    clustersHtml += '</div>';
+
+                    let totalSim = 0;
+                    let count = 0;
+                    for (let i = 0; i < cluster.images.length; i++) {
+                        for (let j = i + 1; j < cluster.images.length; j++) {
+                            totalSim += cosineSimilarity(imageFeatures[cluster.images[i]], imageFeatures[cluster.images[j]]);
+                            count++;
+                        }
+                    }
+                    const avgSim = count > 0 ? (totalSim / count * 100).toFixed(1) : 0;
+
+                    clustersHtml += '<div style="margin-top: 15px; padding: 10px; background: #f8f9ff; border-radius: 6px; font-size: 0.9em;">';
+                    clustersHtml += '<strong>🎯 Cluster Analysis:</strong><br>';
+                    clustersHtml += '<small>Average Internal Similarity: <strong style="color: ' + clusterColor + ';">' + avgSim + '%</strong><br>';
+
+                    if (avgSim > 80) {
+                        clustersHtml += '🚨 <strong>HIGH SIMILARITY</strong> - Likely duplicates, edits, or near-identical captures';
+                    } else if (avgSim > 65) {
+                        clustersHtml += '⚠️ <strong>MODERATE SIMILARITY</strong> - Similar subjects, scenes, or angles';
+                    } else {
+                        clustersHtml += '✓ <strong>LOW-MODERATE SIMILARITY</strong> - Some visual patterns in common';
+                    }
+
+                    clustersHtml += '</small></div>';
+                    clustersHtml += '</div>';
+                }
+            });
+
+            const uniqueImages = imageClusters.filter(c => c.images.length === 1);
+            if (uniqueImages.length > 0) {
+                clustersHtml += '<div style="background: white; padding: 20px; border-radius: 8px; border-left: 5px solid #9e9e9e;">';
+                clustersHtml += '<h4 style="margin: 0 0 15px 0; color: #333;">🔹 Unique Images (No Matches)</h4>';
+                clustersHtml += '<div style="display: grid; grid-template-columns: repeat(auto-fill, minmax(120px, 1fr)); gap: 10px;">';
+
+                uniqueImages.forEach(cluster => {
+                    const imgIdx = cluster.images[0];
+                    const img = processedImages[imgIdx];
+                    clustersHtml += '<div style="text-align: center; padding: 10px; background: #f5f5f5; border-radius: 6px;">';
+                    clustersHtml += '<img src="' + img.dataUrl + '" style="width: 100%; height: 100px; object-fit: cover; border-radius: 4px; margin-bottom: 8px;">';
+                    clustersHtml += '<div style="font-size: 0.85em; color: #666; overflow: hidden; text-overflow: ellipsis; white-space: nowrap;">' + img.filename + '</div>';
+                    clustersHtml += '</div>';
+                });
+
+                clustersHtml += '</div></div>';
+            }
+
+            clustersSection.innerHTML = clustersHtml;
+            imageList.parentNode.insertBefore(clustersSection, imageList);
+        }
+
+
+        fileInput.addEventListener('change', function(e) {
+            if (e.target.files && e.target.files.length > 0) {
+                handleFiles(e.target.files);
+            }
+        });
+
+        function handleFiles(files) {
+            if (!files || files.length === 0) {
+                alert('No files selected!');
+                return;
+            }
+
+            processedImages = [];
+            const imageFiles = Array.from(files).filter(file => file.type.startsWith('image/'));
+
+            if (imageFiles.length === 0) {
+                alert('Please select valid image files!');
+                return;
+            }
+
+            console.log('Processing ' + imageFiles.length + ' images...');
+            document.getElementById('uploadArea').innerHTML = '<h2>⏳ Processing ' + imageFiles.length + ' image(s)...</h2><p>Please wait...</p>';
+
+            let processed = 0;
+            imageFiles.forEach(function(file) {
+                const reader = new FileReader();
+                reader.onload = function(e) {
+                    const img = new Image();
+                    img.onload = function() {
+                        EXIF.getData(img, function() {
+                            try {
+                                const exifData = extractExifData(this, file);
+                                processedImages.push(exifData);
+                                processed++;
+
+                                if (processed === imageFiles.length) {
+                                    analyzeImages();
+                                }
+                            } catch (error) {
+                                console.error('Error:', error);
+                                processed++;
+                                if (processed === imageFiles.length && processedImages.length > 0) {
+                                    analyzeImages();
+                                }
+                            }
+                        });
+                    };
+                    img.src = e.target.result;
+                };
+                reader.readAsDataURL(file);
+            });
+        }
+
+        function extractExifData(img, file) {
+            const allTags = EXIF.getAllTags(img);
+
+            const lat = allTags.GPSLatitude;
+            const lon = allTags.GPSLongitude;
+            const latRef = allTags.GPSLatitudeRef;
+            const lonRef = allTags.GPSLongitudeRef;
+
+            let gps = null;
+            if (lat && lon) {
+                gps = {
+                    latitude: convertDMSToDD(lat, latRef),
+                    longitude: convertDMSToDD(lon, lonRef)
+                };
+            }
+
+            const dateTimeOriginal = allTags.DateTimeOriginal || allTags.DateTime;
+            const timestamp = dateTimeOriginal ? new Date(dateTimeOriginal.replace(/^(\d{4}):(\d{2}):(\d{2})/, '$1-$2-$3')) : null;
+
+            const width = allTags.PixelXDimension || allTags.ExifImageWidth || img.width;
+            const height = allTags.PixelYDimension || allTags.ExifImageHeight || img.height;
+            const megapixels = ((width * height) / 1000000).toFixed(1);
+
+            const filenameMatch = file.name.match(/\d+/);
+            const filenameNumber = filenameMatch ? parseInt(filenameMatch[0]) : null;
+
+            return {
+                filename: file.name,
+                filesize: file.size,
+                filetype: file.type,
+                lastModified: new Date(file.lastModified),
+                make: allTags.Make || 'Unknown',
+                model: allTags.Model || 'Unknown',
+                camera: allTags.Make && allTags.Model ? allTags.Make + ' ' + allTags.Model : 'Unknown',
+                software: allTags.Software || 'N/A',
+                timestamp: timestamp,
+                dateTimeOriginal: allTags.DateTimeOriginal || 'N/A',
+                exposureTime: allTags.ExposureTime || 'N/A',
+                fNumber: allTags.FNumber || 'N/A',
+                iso: allTags.ISOSpeedRatings || 'N/A',
+                shutterSpeed: allTags.ExposureTime ? '1/' + Math.round(1/allTags.ExposureTime) : 'N/A',
+                aperture: allTags.FNumber || 'N/A',
+                focalLength: allTags.FocalLength ? allTags.FocalLength + ' mm' : 'N/A',
+                focalLength35mm: allTags.FocalLengthIn35mmFilm ? allTags.FocalLengthIn35mmFilm + ' mm' : 'N/A',
+                imageWidth: width,
+                imageHeight: height,
+                megapixels: megapixels,
+                gps: gps,
+                filenameNumber: filenameNumber,
+                rawExif: allTags,
+                dataUrl: img.src,
+                allExifKeys: Object.keys(allTags)
+            };
+        }
+
+        function convertDMSToDD(dms, ref) {
+            if (!dms || dms.length !== 3) return null;
+            let dd = dms[0] + dms[1]/60 + dms[2]/3600;
+            if (ref === 'S' || ref === 'W') dd = dd * -1;
+            return dd;
+        }
+
+        function analyzeImages() {
+            if (processedImages.length === 0) {
+                alert('No images processed');
+                return;
+            }
+
+            document.getElementById('uploadArea').innerHTML = '<h2>✅ Analyzed ' + processedImages.length + ' Image(s)</h2>';
+            document.getElementById('statsPanel').style.display = 'block';
+            document.getElementById('anomaliesPanel').style.display = 'block';
+            document.getElementById('imageList').classList.remove('hidden');
+            document.getElementById('actionButtons').classList.remove('hidden');
+
+            updateStatistics();
+            detectAnomalies();
+
+            performAIClustering().then(() => {
+                displayImages();
+                displayClusters();
+            });
+
+            createMap();
+        }
+
+        function updateStatistics() {
+            const withGPS = processedImages.filter(img => img.gps).length;
+            const devices = new Set(processedImages.map(img => img.camera)).size;
+
+            const timestamps = processedImages.filter(img => img.timestamp).map(img => img.timestamp);
+            const dateRange = timestamps.length > 0 ?
+                new Date(Math.min.apply(null, timestamps)).toLocaleDateString() + ' - ' + new Date(Math.max.apply(null, timestamps)).toLocaleDateString() :
+                'N/A';
+
+            document.getElementById('totalImages').textContent = processedImages.length;
+            document.getElementById('gpsCount').textContent = withGPS + ' (' + Math.round(withGPS/processedImages.length*100) + '%)';
+            document.getElementById('deviceCount').textContent = devices;
+            document.getElementById('dateRange').textContent = dateRange;
+
+            if (withGPS > 1) {
+                const imagesWithGPS = processedImages.filter(img => img.gps);
+                const clusters = clusterByLocation(imagesWithGPS, 1.0);
+
+                const statsPanel = document.getElementById('statsPanel');
+                const clusterInfo = document.createElement('div');
+                clusterInfo.className = 'stat-item';
+                clusterInfo.innerHTML = '<span class="stat-label">Location Clusters:</span><span class="stat-value">' + clusters.length + ' (within 1km)</span>';
+                statsPanel.appendChild(clusterInfo);
+            }
+        }
+
+        function detectAnomalies() {
+            const anomalies = [];
+
+            processedImages.forEach(function(img) {
+                if (!img.gps) {
+                    anomalies.push({
+                        type: 'Missing GPS Data',
+                        file: img.filename,
+                        description: 'No GPS coordinates found'
+                    });
+                }
+
+                if (img.timestamp && img.timestamp > new Date()) {
+                    anomalies.push({
+                        type: 'Future Timestamp',
+                        file: img.filename,
+                        description: 'Timestamp is in the future'
+                    });
+                }
+
+                if (img.timestamp && img.lastModified) {
+                    const diff = Math.abs((img.timestamp - img.lastModified) / (1000 * 60 * 60 * 24));
+                    if (diff > 30) {
+                        anomalies.push({
+                            type: 'Date Mismatch',
+                            file: img.filename,
+                            description: 'EXIF and file dates differ by ' + Math.round(diff) + ' days'
+                        });
+                    }
+                }
+            });
+
+            document.getElementById('anomalyCount').textContent = anomalies.length;
+
+            const anomaliesList = document.getElementById('anomaliesList');
+            if (anomalies.length === 0) {
+                anomaliesList.innerHTML = '<div class="anomaly-item"><div class="success">No anomalies detected</div></div>';
+            } else {
+                anomaliesList.innerHTML = anomalies.map(function(a) {
+                    return '<div class="anomaly-item"><div class="anomaly-type">' + a.type + '</div><div class="anomaly-desc"><strong>' + a.file + '</strong><br>' + a.description + '</div></div>';
+                }).join('');
+            }
+        }
+
+        function displayImages() {
+            const listContent = document.getElementById('imageListContent');
+            let htmlContent = '';
+
+            processedImages.forEach(function(img, idx) {
+                // Find cluster info for this image
+                let clusterInfo = '';
+                let clusterColor = '#9e9e9e';
+                let clusterSize = 1;
+
+                if (imageClusters.length > 0) {
+                    const cluster = imageClusters.find(c => c.images.includes(idx));
+                    if (cluster) {
+                        clusterColor = getClusterColor(cluster.id);
+                        clusterSize = cluster.images.length;
+                        if (clusterSize > 1) {
+                            clusterInfo = '<div style="display: inline-block; background: ' + clusterColor + '; color: white; padding: 3px 8px; border-radius: 12px; font-size: 0.8em; font-weight: bold; margin-left: 10px;">Cluster ' + (cluster.id + 1) + ' (' + clusterSize + ' images)</div>';
+                        } else {
+                            clusterInfo = '<div style="display: inline-block; background: #9e9e9e; color: white; padding: 3px 8px; border-radius: 12px; font-size: 0.8em; margin-left: 10px;">Unique</div>';
+                        }
+                    }
+                }
+
+                const searchId = 'search-' + idx;
+
+                htmlContent += '<div class="image-item" style="border-left: 4px solid ' + clusterColor + ';">';
+                htmlContent += '<img src="' + img.dataUrl + '" class="image-thumb" alt="' + img.filename + '" id="img-' + idx + '">';
+                htmlContent += '<div class="image-details">';
+                htmlContent += '<div><span class="label">📁 File:</span>' + img.filename + ' (' + (img.filesize / 1000).toFixed(1) + ' kB)' + clusterInfo + '</div>';
+                htmlContent += '<div><span class="label">📷 Camera:</span>' + img.camera + '</div>';
+                htmlContent += '<div><span class="label">🔧 Settings:</span>ISO ' + img.iso + ', ' + img.shutterSpeed + 's, f/' + img.aperture + '</div>';
+                htmlContent += '<div><span class="label">🕐 Date:</span>' + img.dateTimeOriginal + '</div>';
+                htmlContent += '<div><span class="label">📐 Size:</span>' + img.imageWidth + '×' + img.imageHeight + ' (' + img.megapixels + ' MP)</div>';
+                htmlContent += '<div><span class="label">🌍 GPS:</span>' + (img.gps ? img.gps.latitude.toFixed(6) + ', ' + img.gps.longitude.toFixed(6) : '<span class="warning">Not available</span>') + '</div>';
+                htmlContent += '<div class="reverse-search-box">';
+                htmlContent += '<strong>🔍 REVERSE IMAGE SEARCH:</strong><br>';
+                htmlContent += '<div style="margin-top: 8px;">';
+                htmlContent += '<button class="btn btn-secondary" style="padding: 8px 15px; margin-right: 8px; margin-bottom: 8px; font-size: 0.9em;" onclick="searchAIPowered(' + idx + ')">🤖 AI-Powered Local Search</button><br>';
+                htmlContent += '<button class="btn btn-secondary" style="padding: 8px 15px; margin-right: 8px; font-size: 0.9em;" onclick="searchGoogle(' + idx + ')">🔍 Search on Google</button>';
+                htmlContent += '<button class="btn btn-secondary" style="padding: 8px 15px; margin-right: 8px; font-size: 0.9em;" onclick="searchTinEye(' + idx + ')">🔍 Search on TinEye</button>';
+                htmlContent += '<button class="btn btn-secondary" style="padding: 8px 15px; font-size: 0.9em;" onclick="searchYandex(' + idx + ')">🔍 Search on Yandex</button>';
+                htmlContent += '</div>';
+                htmlContent += '<div id="' + searchId + '" style="margin-top: 10px;"></div>';
+                htmlContent += '<small style="color: #666; display: block; margin-top: 8px;">🤖 AI-Powered: Compare against all images in this batch using machine learning (100% offline)<br>';
+                htmlContent += '🌐 Online Search: Manual upload to external search engines</small>';
+                htmlContent += '</div>';
+                htmlContent += '</div></div>';
+            });
+
+            listContent.innerHTML = htmlContent;
+        }
+
+        function searchAIPowered(idx) {
+            const img = processedImages[idx];
+            const searchDiv = document.getElementById('search-' + idx);
+
+            searchDiv.innerHTML = '<div style="background: #e3f2fd; padding: 10px; border-radius: 4px;">' +
+                '<strong>🤖 AI-Powered Reverse Image Search</strong><br>' +
+                '<small>Loading TensorFlow.js model and analyzing images...</small></div>';
+
+            performAISearch(idx).then(results => {
+                let html = '<div style="background: #e8f5e9; padding: 10px; border-radius: 4px; margin-top: 5px;">';
+                html += '<strong>✅ AI Analysis Complete!</strong><br>';
+                html += '<small>Using MobileNet (Open-Source CNN) for visual similarity</small><br><br>';
+
+                if (results.length > 0) {
+                    html += '<strong>🎯 Similar Images Found in Your Batch:</strong><br>';
+                    results.forEach((result, i) => {
+                        const similarityPercent = (result.similarity * 100).toFixed(1);
+                        let color = '#4caf50';
+                        if (result.similarity < 0.5) color = '#ff9800';
+                        if (result.similarity < 0.3) color = '#f44336';
+
+                        html += '<div style="margin: 8px 0; padding: 8px; background: white; border-radius: 4px; border-left: 4px solid ' + color + ';">';
+                        html += '<strong>' + (i+1) + '. ' + result.filename + '</strong><br>';
+                        html += '<div style="background: #f5f5f5; padding: 5px; border-radius: 3px; margin-top: 5px;">';
+                        html += '<strong>Similarity Score: </strong><span style="color: ' + color + '; font-weight: bold;">' + similarityPercent + '%</span><br>';
+                        html += '<small>';
+                        if (result.similarity > 0.7) {
+                            html += '✅ <strong>Very Similar</strong> - Possible duplicate or near-match';
+                        } else if (result.similarity > 0.5) {
+                            html += '⚠️ <strong>Moderately Similar</strong> - Some visual similarities';
+                        } else {
+                            html += '❌ <strong>Low Similarity</strong> - Different images';
+                        }
+                        html += '</small></div>';
+                        html += '</div>';
+                    });
+
+                    html += '<br><div style="background: #fff3cd; padding: 8px; border-radius: 4px;">';
+                    html += '<strong>📊 Forensic Interpretation:</strong><br>';
+                    html += '<small>';
+                    const maxSimilarity = results[0].similarity;
+                    if (maxSimilarity > 0.8) {
+                        html += '🚨 <strong>ALERT:</strong> Extremely high similarity detected. Images may be duplicates, edited versions, or screenshots of each other.';
+                    } else if (maxSimilarity > 0.6) {
+                        html += '⚠️ <strong>NOTICE:</strong> Significant visual similarity found. Images may share common subjects, scenes, or be taken from similar angles.';
+                    } else {
+                        html += '✓ <strong>FINDING:</strong> No visually similar images found in batch. Image appears unique within this collection.';
+                    }
+                    html += '</small></div>';
+                } else {
+                    html += '<span style="color: #4caf50;">✓ No visually similar images found in this batch.</span><br>';
+                    html += '<small>This image appears unique compared to other uploaded images.</small>';
+                }
+
+                html += '<br><br><div style="font-size: 0.85em; color: #666; padding-top: 8px; border-top: 1px solid #ddd;">';
+                html += '<strong>🔬 How it works:</strong><br>';
+                html += '• Uses MobileNet CNN (pre-trained on ImageNet) for feature extraction<br>';
+                html += '• Compares 1024-dimensional feature vectors using cosine similarity<br>';
+                html += '• 100% offline - no data sent to external servers<br>';
+                html += '• Free forever - no API costs or rate limits';
+                html += '</div></div>';
+
+                searchDiv.innerHTML = html;
+            }).catch(error => {
+                searchDiv.innerHTML = '<div style="background: #ffebee; padding: 10px; border-radius: 4px;">' +
+                    '<strong>❌ AI Search Error:</strong> ' + error.message + '<br>' +
+                    '<small>Try using online search options instead.</small></div>';
+            });
+        }
+
+        async function performAISearch(targetIdx) {
+            if (!mobileNetModel) {
+                await loadMobileNet();
+            }
+
+            if (imageFeatures.length !== processedImages.length) {
+                imageFeatures = [];
+                for (let i = 0; i < processedImages.length; i++) {
+                    const features = await extractImageFeatures(processedImages[i]);
+                    imageFeatures.push(features);
+                }
+            }
+
+            const targetFeatures = imageFeatures[targetIdx];
+            const similarities = [];
+
+            for (let i = 0; i < processedImages.length; i++) {
+                if (i === targetIdx) continue;
+
+                const similarity = cosineSimilarity(targetFeatures, imageFeatures[i]);
+                similarities.push({
+                    index: i,
+                    filename: processedImages[i].filename,
+                    similarity: similarity
+                });
+            }
+
+            similarities.sort((a, b) => b.similarity - a.similarity);
+
+            return similarities.slice(0, 5);
+        }
+
+        function searchGoogle(idx) {
+            const img = processedImages[idx];
+
+            const link = document.createElement('a');
+            link.href = img.dataUrl;
+            link.download = img.filename;
+            document.body.appendChild(link);
+            link.click();
+            document.body.removeChild(link);
+
+            setTimeout(function() {
+                window.open('https://images.google.com/', '_blank');
+            }, 500);
+
+            const searchDiv = document.getElementById('search-' + idx);
+            searchDiv.innerHTML = '<div style="background: #fff3cd; padding: 10px; border-radius: 4px;">' +
+                '<strong>📋 Instructions:</strong><br>' +
+                '<small>1. Downloaded: <strong>' + img.filename + '</strong><br>' +
+                '2. Google Images opened in new tab<br>' +
+                '3. Click camera icon in search bar<br>' +
+                '4. Upload: ' + img.filename + '<br>' +
+                '5. Review results for matches</small></div>';
+        }
+
+        function searchTinEye(idx) {
+            const img = processedImages[idx];
+
+            const link = document.createElement('a');
+            link.href = img.dataUrl;
+            link.download = img.filename;
+            document.body.appendChild(link);
+            link.click();
+            document.body.removeChild(link);
+
+            setTimeout(function() {
+                window.open('https://tineye.com/', '_blank');
+            }, 500);
+
+            const searchDiv = document.getElementById('search-' + idx);
+            searchDiv.innerHTML = '<div style="background: #fff3cd; padding: 10px; border-radius: 4px;">' +
+                '<strong>📋 TinEye Search:</strong><br>' +
+                '<small>1. Downloaded: <strong>' + img.filename + '</strong><br>' +
+                '2. TinEye opened in new tab<br>' +
+                '3. Click "Upload" button<br>' +
+                '4. Select: ' + img.filename + '<br>' +
+                '5. TinEye shows ALL matches with dates!</small></div>';
+        }
+
+        function searchYandex(idx) {
+            const img = processedImages[idx];
+
+            const link = document.createElement('a');
+            link.href = img.dataUrl;
+            link.download = img.filename;
+            document.body.appendChild(link);
+            link.click();
+            document.body.removeChild(link);
+
+            setTimeout(function() {
+                window.open('https://yandex.com/images/', '_blank');
+            }, 500);
+
+            const searchDiv = document.getElementById('search-' + idx);
+            searchDiv.innerHTML = '<div style="background: #fff3cd; padding: 10px; border-radius: 4px;">' +
+                '<strong>📋 Yandex Search:</strong><br>' +
+                '<small>1. Downloaded: <strong>' + img.filename + '</strong><br>' +
+                '2. Yandex Images opened<br>' +
+                '3. Click camera icon<br>' +
+                '4. Upload: ' + img.filename + '<br>' +
+                '5. Yandex finds even obscure matches!</small></div>';
+        }
+
+        function createMap() {
+            const imagesWithGPS = processedImages.filter(img => img.gps);
+
+            if (imagesWithGPS.length === 0) return;
+
+            document.getElementById('map').classList.remove('hidden');
+
+            if (map) map.remove();
+
+            map = L.map('map').setView([imagesWithGPS[0].gps.latitude, imagesWithGPS[0].gps.longitude], 12);
+
+            L.tileLayer('https://{s}.tile.openstreetmap.org/{z}/{x}/{y}.png', {
+                attribution: '© OpenStreetMap'
+            }).addTo(map);
+
+            const clusters = clusterByLocation(imagesWithGPS, 1.0);
+
+            clusters.forEach(function(cluster) {
+                const lat = cluster.center.lat;
+                const lon = cluster.center.lon;
+
+                let iconColor = '#667eea';
+                if (cluster.images.length > 5) iconColor = '#e74c3c';
+                else if (cluster.images.length > 2) iconColor = '#f39c12';
+
+                const marker = L.marker([lat, lon], {
+                    icon: L.divIcon({
+                        className: 'custom-marker',
+                        html: '<div style="background: ' + iconColor + '; color: white; border-radius: 50%; width: 30px; height: 30px; display: flex; align-items: center; justify-content: center; font-weight: bold; border: 2px solid white; box-shadow: 0 2px 5px rgba(0,0,0,0.3);">' + cluster.images.length + '</div>',
+                        iconSize: [30, 30]
+                    })
+                }).addTo(map);
+
+                let popupContent = '<div style="max-width: 250px;">';
+                popupContent += '<strong>📍 Location Cluster</strong><br>';
+                popupContent += '<strong>' + cluster.images.length + ' photo(s) at this location</strong><br><br>';
+
+                cluster.images.forEach(function(img, idx) {
+                    popupContent += '<div style="margin-bottom: 8px; padding: 5px; background: #f8f9ff; border-radius: 3px;">';
+                    popupContent += '<strong>' + (idx + 1) + '.</strong> ' + img.filename + '<br>';
+                    popupContent += '<small>📷 ' + img.camera + '<br>';
+                    popupContent += '🕐 ' + (img.timestamp ? img.timestamp.toLocaleString() : 'N/A') + '</small>';
+                    popupContent += '</div>';
+                });
+
+                popupContent += '</div>';
+                marker.bindPopup(popupContent);
+                markers.push(marker);
+            });
+
+            if (imagesWithGPS.length > 1) {
+                const bounds = L.latLngBounds(imagesWithGPS.map(img => [img.gps.latitude, img.gps.longitude]));
+                map.fitBounds(bounds, {padding: [50, 50]});
+            }
+        }
+
+        function clusterByLocation(images, radiusKm) {
+            const clusters = [];
+            const processed = new Set();
+
+            images.forEach(function(img, idx) {
+                if (processed.has(idx)) return;
+
+                const cluster = {
+                    center: { lat: img.gps.latitude, lon: img.gps.longitude },
+                    images: [img]
+                };
+
+                processed.add(idx);
+
+                images.forEach(function(otherImg, otherIdx) {
+                    if (processed.has(otherIdx)) return;
+
+                    const distance = calculateDistance(
+                        img.gps.latitude, img.gps.longitude,
+                        otherImg.gps.latitude, otherImg.gps.longitude
+                    );
+
+                    if (distance <= radiusKm) {
+                        cluster.images.push(otherImg);
+                        processed.add(otherIdx);
+                    }
+                });
+
+                if (cluster.images.length > 1) {
+                    let sumLat = 0, sumLon = 0;
+                    cluster.images.forEach(function(img) {
+                        sumLat += img.gps.latitude;
+                        sumLon += img.gps.longitude;
+                    });
+                    cluster.center.lat = sumLat / cluster.images.length;
+                    cluster.center.lon = sumLon / cluster.images.length;
+                }
+
+                clusters.push(cluster);
+            });
+
+            return clusters;
+        }
+
+        function calculateDistance(lat1, lon1, lat2, lon2) {
+            const R = 6371;
+            const dLat = (lat2 - lat1) * Math.PI / 180;
+            const dLon = (lon2 - lon1) * Math.PI / 180;
+            const a = Math.sin(dLat/2) * Math.sin(dLat/2) +
+                      Math.cos(lat1 * Math.PI / 180) * Math.cos(lat2 * Math.PI / 180) *
+                      Math.sin(dLon/2) * Math.sin(dLon/2);
+            const c = 2 * Math.atan2(Math.sqrt(a), Math.sqrt(1-a));
+            return R * c;
+        }
+
+        function calculateAuthenticityScore(img) {
+            let score = 100;
+            if (!img.gps) score -= 20;
+            if (img.allExifKeys.length < 25) score -= 15;
+            if (img.software && (img.software.toLowerCase().indexOf('gimp') > -1 || img.software.toLowerCase().indexOf('photoshop') > -1)) score -= 10;
+            if (img.timestamp && img.lastModified && Math.abs((img.timestamp - img.lastModified) / (1000 * 60 * 60 * 24)) > 365) score -= 25;
+            return Math.max(0, score);
+        }
+
+        function generateReport() {
+            const withGPS = processedImages.filter(img => img.gps).length;
+            const devices = Array.from(new Set(processedImages.map(img => img.camera)));
+
+            let report = '';
+            report += '╔═══════════════════════════════════════════════════════════════════════════════╗\n';
+            report += '║     EXIF DATA EXTRACTOR & MAPPER - COMPREHENSIVE FORENSIC ANALYSIS REPORT    ║\n';
+            report += '╚═══════════════════════════════════════════════════════════════════════════════╝\n\n';
+            report += 'Report Generated: ' + new Date().toLocaleString() + '\n';
+            report += 'Analyst: Digital Forensics Tool v2.0 (AI-Powered Edition)\n';
+            report += 'Case Number: FR-' + Date.now() + '\n\n';
+            report += '═══════════════════════════════════════════════════════════════════════════════\n\n';
+
+            //  SUMMARY
+            report += 'SUMMARY\n';
+            report += '═══════════════════════════════════════════════════════════════════════════════\n\n';
+            report += 'Total Images Analyzed:        ' + processedImages.length + '\n';
+            report += 'Images with GPS Data:         ' + withGPS + ' (' + Math.round(withGPS/processedImages.length*100) + '%)\n';
+            report += 'Images without GPS Data:      ' + (processedImages.length - withGPS) + '\n';
+            report += 'Unique Camera Devices:        ' + devices.length + '\n';
+            report += 'AI Visual Clusters:           ' + imageClusters.length + '\n';
+            report += 'Date Range:                   ' + document.getElementById('dateRange').textContent + '\n';
+            report += 'Total Anomalies Detected:     ' + document.getElementById('anomalyCount').textContent + '\n\n';
+            report += 'Camera Devices Found:\n';
+            devices.forEach(function(d, i) {
+                report += '  ' + (i + 1) + '. ' + d + '\n';
+            });
+
+            report += '\n═══════════════════════════════════════════════════════════════════════════════\n\n';
+
+            // AI CLUSTERING ANALYSIS
+            if (imageClusters.length > 0) {
+                report += '🤖 AI-POWERED VISUAL SIMILARITY CLUSTERING\n';
+                report += '═══════════════════════════════════════════════════════════════════════════════\n\n';
+
+                const multiImageClusters = imageClusters.filter(c => c.images.length > 1);
+                const singletons = imageClusters.filter(c => c.images.length === 1);
+
+                report += 'CLUSTERING SUMMARY:\n';
+                report += '  Total Clusters Identified:        ' + imageClusters.length + '\n';
+                report += '  Clusters with Multiple Images:    ' + multiImageClusters.length + '\n';
+                report += '  Unique Images (No Matches):       ' + singletons.length + '\n\n';
+
+                if (multiImageClusters.length > 0) {
+                    multiImageClusters.forEach(function(cluster) {
+                        report += 'CLUSTER ' + (cluster.id + 1) + ': ' + cluster.images.length + ' VISUALLY SIMILAR IMAGES\n';
+                        report += '─'.repeat(79) + '\n';
+
+                        let totalSim = 0, count = 0;
+                        for (let i = 0; i < cluster.images.length; i++) {
+                            for (let j = i + 1; j < cluster.images.length; j++) {
+                                totalSim += cosineSimilarity(imageFeatures[cluster.images[i]], imageFeatures[cluster.images[j]]);
+                                count++;
+                            }
+                        }
+                        const avgSim = count > 0 ? (totalSim / count * 100).toFixed(1) : 0;
+
+                        report += 'Average Internal Similarity: ' + avgSim + '%\n';
+                        if (avgSim > 80) {
+                            report += 'Assessment: 🚨 HIGH SIMILARITY - Likely duplicates or edits\n';
+                        } else if (avgSim > 65) {
+                            report += 'Assessment: ⚠️  MODERATE SIMILARITY - Similar subjects/scenes\n';
+                        }
+
+                        report += '\nImages in cluster:\n';
+                        cluster.images.forEach(function(imgIdx) {
+                            const img = processedImages[imgIdx];
+                            report += '  - ' + img.filename + ' (' + img.camera + ')\n';
+                        });
+                        report += '\n';
+                    });
+                }
+
+                report += '═══════════════════════════════════════════════════════════════════════════════\n\n';
+            }
+
+            // CROSS-IMAGE COMPARISON TABLE
+            report += 'CROSS-IMAGE COMPARISON TABLE\n';
+            report += '═══════════════════════════════════════════════════════════════════════════════\n\n';
+
+            if (processedImages.length > 1) {
+                report += 'Image-by-Image Comparison:\n\n';
+
+                report += '┌────┬──────────────┬────────────┬─────┬──────────┬─────┬────────────┬──────────┐\n';
+                report += '│ #  │ Filename     │ Camera     │ ISO │ Aperture │ GPS │ Auth Score │ Time Gap │\n';
+                report += '├────┼──────────────┼────────────┼─────┼──────────┼─────┼────────────┼──────────┤\n';
+
+                processedImages.forEach(function(img, idx) {
+                    const authScore = calculateAuthenticityScore(img);
+                    const timeDiff = img.timestamp && img.lastModified ?
+                        Math.abs((img.timestamp - img.lastModified) / (1000 * 60 * 60 * 24)).toFixed(1) + 'd' : 'N/A';
+
+                    const filename = img.filename.length > 12 ? img.filename.substring(0, 10) + '..' : img.filename;
+                    const camera = img.camera.length > 10 ? img.camera.substring(0, 8) + '..' : img.camera;
+
+                    report += '│ ' + String(idx + 1).padStart(2) + ' │ ';
+                    report += filename.padEnd(12) + ' │ ';
+                    report += camera.padEnd(10) + ' │ ';
+                    report += String(img.iso).padStart(3) + ' │ ';
+                    report += ('f/' + img.aperture).padEnd(8) + ' │ ';
+                    report += (img.gps ? 'Yes' : 'No ').padEnd(3) + ' │ ';
+                    report += (authScore + '%').padStart(10) + ' │ ';
+                    report += timeDiff.padEnd(8) + ' │\n';
+                });
+
+                report += '└────┴──────────────┴────────────┴─────┴──────────┴─────┴────────────┴──────────┘\n\n';
+
+                // PATTERN ANALYSIS
+                report += 'PATTERN ANALYSIS:\n';
+                const uniqueCameras = new Set(processedImages.map(img => img.camera)).size;
+                const uniqueISO = new Set(processedImages.map(img => img.iso)).size;
+
+                report += '  • Device Consistency:       ' + (uniqueCameras === 1 ? 'CONSISTENT (same device)' : 'INCONSISTENT (' + uniqueCameras + ' devices)') + '\n';
+                report += '  • ISO Variation:            ' + uniqueISO + ' different ISO values\n';
+                report += '  • GPS Coverage:             ' + withGPS + '/' + processedImages.length + ' images (' + Math.round(withGPS/processedImages.length*100) + '%)\n';
+
+                const avgAuth = processedImages.reduce(function(sum, img) {
+                    return sum + calculateAuthenticityScore(img);
+                }, 0) / processedImages.length;
+                report += '  • Average Authenticity:     ' + avgAuth.toFixed(1) + '%\n\n';
+            }
+
+            report += '═══════════════════════════════════════════════════════════════════════════════\n\n';
+
+            // GEOGRAPHIC CLUSTERING
+            if (processedImages.filter(img => img.gps).length > 1) {
+                report += 'GEOGRAPHIC CLUSTERING ANALYSIS\n';
+                report += '═══════════════════════════════════════════════════════════════════════════════\n\n';
+
+                const imagesWithGPS = processedImages.filter(img => img.gps);
+                const clusters = clusterByLocation(imagesWithGPS, 1.0);
+
+                report += 'Location Clusters (within 1km radius):\n';
+                report += 'Total Clusters Found: ' + clusters.length + '\n\n';
+
+                clusters.forEach(function(cluster, idx) {
+                    report += 'Cluster ' + (idx + 1) + ':\n';
+                    report += '  Center Location: ' + cluster.center.lat.toFixed(6) + ', ' + cluster.center.lon.toFixed(6) + '\n';
+                    report += '  Photos in cluster: ' + cluster.images.length + '\n';
+                    report += '  Google Maps Link: https://www.google.com/maps?q=' + cluster.center.lat + ',' + cluster.center.lon + '\n';
+                    report += '  Images in this cluster:\n';
+                    cluster.images.forEach(function(img) {
+                        const dateStr = img.timestamp ? img.timestamp.toLocaleString() : 'N/A';
+                        report += '    - ' + img.filename + ' (' + dateStr + ')\n';
+                    });
+                    report += '\n';
+                });
+
+                if (clusters.length === 1 && clusters[0].images.length === imagesWithGPS.length) {
+                    report += '✓ ANALYSIS: All photos taken at same location (within 1km)\n';
+                    report += '  This is consistent with photos from a single event/location\n\n';
+                }
+
+                report += '═══════════════════════════════════════════════════════════════════════════════\n\n';
+            }
+
+            // DETAILED IMAGE ANALYSIS
+            report += 'DETAILED IMAGE ANALYSIS\n';
+            report += '═══════════════════════════════════════════════════════════════════════════════\n\n';
+
+            processedImages.forEach(function(img, i) {
+                report += 'Image ' + (i + 1) + ': ' + img.filename + '\n';
+                report += '─'.repeat(79) + '\n\n';
+
+                report += 'FILE INFORMATION:\n';
+                report += '  File Name:                  ' + img.filename + '\n';
+                report += '  File Size:                  ' + (img.filesize / 1000).toFixed(1) + ' kB\n';
+                report += '  File Type:                  ' + img.filetype + '\n';
+                report += '  File Modified Date:         ' + img.lastModified.toLocaleString() + '\n\n';
+
+                report += 'CAMERA INFORMATION:\n';
+                report += '  Make:                       ' + img.make + '\n';
+                report += '  Model:                      ' + img.model + '\n';
+                report += '  Software:                   ' + img.software + '\n\n';
+
+                report += 'DATE/TIME INFORMATION:\n';
+                report += '  Date/Time Original:         ' + img.dateTimeOriginal + '\n';
+                report += '  Timestamp (Parsed):         ' + (img.timestamp ? img.timestamp.toLocaleString() : 'N/A') + '\n';
+                if (img.timestamp && img.lastModified) {
+                    const daysDiff = Math.abs((img.timestamp - img.lastModified) / (1000 * 60 * 60 * 24));
+                    report += '  Time Discrepancy:           ' + daysDiff.toFixed(2) + ' days\n';
+                }
+                report += '\n';
+
+                report += 'CAMERA SETTINGS:\n';
+                report += '  ISO:                        ' + img.iso + '\n';
+                report += '  Aperture (F Number):        f/' + img.aperture + '\n';
+                report += '  Shutter Speed:              ' + img.shutterSpeed + '\n';
+                report += '  Focal Length:               ' + img.focalLength + '\n';
+                report += '  Focal Length (35mm equiv):  ' + img.focalLength35mm + '\n\n';
+
+                report += 'IMAGE PROPERTIES:\n';
+                report += '  Image Width:                ' + img.imageWidth + ' pixels\n';
+                report += '  Image Height:               ' + img.imageHeight + ' pixels\n';
+                report += '  Megapixels:                 ' + img.megapixels + ' MP\n';
+                report += '  Aspect Ratio:               ' + (img.imageWidth / img.imageHeight).toFixed(2) + ':1\n\n';
+
+                report += 'GPS LOCATION DATA:\n';
+                if (img.gps) {
+                    report += '  Latitude:                   ' + img.gps.latitude.toFixed(8) + '°\n';
+                    report += '  Longitude:                  ' + img.gps.longitude.toFixed(8) + '°\n';
+                    report += '  Google Maps Link:           https://www.google.com/maps?q=' + img.gps.latitude + ',' + img.gps.longitude + '\n';
+                } else {
+                    report += '  GPS Data:                   NOT AVAILABLE\n';
+                }
+                report += '\n';
+
+                report += 'FORENSIC ANALYSIS:\n';
+                report += '  Total EXIF Fields:          ' + img.allExifKeys.length + '\n';
+                report += '  Metadata Completeness:      ' + (img.allExifKeys.length > 40 ? 'High' : img.allExifKeys.length > 25 ? 'Medium' : 'Low') + '\n';
+
+                const authScore = calculateAuthenticityScore(img);
+                report += '  Authenticity Score:         ' + authScore + '%\n';
+                if (authScore >= 80) report += '  Assessment:                 HIGH CONFIDENCE - Likely authentic\n';
+                else if (authScore >= 60) report += '  Assessment:                 MEDIUM CONFIDENCE - Some concerns\n';
+                else report += '  Assessment:                 LOW CONFIDENCE - Multiple red flags\n';
+
+                report += '\n';
+            });
+
+            report += '═══════════════════════════════════════════════════════════════════════════════\n\n';
+
+            // COMPLETE EXIF TAG DUMP
+            report += 'COMPLETE EXIF TAG DUMP\n';
+            report += '═══════════════════════════════════════════════════════════════════════════════\n\n';
+
+            processedImages.forEach(function(img, i) {
+                report += 'Image ' + (i + 1) + ': ' + img.filename + '\n';
+                report += '─'.repeat(79) + '\n';
+                report += 'All EXIF Tags Found (' + img.allExifKeys.length + ' total):\n\n';
+
+                img.allExifKeys.sort().forEach(function(key) {
+                    let value = img.rawExif[key];
+                    if (Array.isArray(value)) value = value.join(', ');
+                    if (typeof value === 'object' && value !== null) value = JSON.stringify(value);
+                    if (typeof value === 'string' && value.length > 60) value = value.substring(0, 57) + '...';
+
+                    const paddedKey = (key + ' '.repeat(35)).substring(0, 35);
+                    report += '  ' + paddedKey + ' : ' + value + '\n';
+                });
+
+                report += '\n';
+            });
+
+            report += '═══════════════════════════════════════════════════════════════════════════════\n\n';
+
+            // Save report
+            const blob = new Blob([report], { type: 'text/plain' });
+            const url = URL.createObjectURL(blob);
+            const a = document.createElement('a');
+            a.href = url;
+            a.download = 'Comprehensive_Forensic_Report_' + Date.now() + '.txt';
+            document.body.appendChild(a);
+            a.click();
+            document.body.removeChild(a);
+            URL.revokeObjectURL(url);
+
+            alert('Comprehensive forensic report generated with AI clustering analysis!');
+        }
+
+        function exportData() {
+            const data = {
+                generatedAt: new Date().toISOString(),
+                totalImages: processedImages.length,
+                aiClusters: imageClusters.length,
+                images: processedImages.map(function(img) {
+                    return {
+                        filename: img.filename,
+                        camera: img.camera,
+                        timestamp: img.timestamp,
+                        gps: img.gps,
+                        filesize: img.filesize
+                    };
+                })
+            };
+
+            const blob = new Blob([JSON.stringify(data, null, 2)], { type: 'application/json' });
+            const url = URL.createObjectURL(blob);
+            const a = document.createElement('a');
+            a.href = url;
+            a.download = 'EXIF_Data_' + Date.now() + '.json';
+            document.body.appendChild(a);
+            a.click();
+            document.body.removeChild(a);
+            URL.revokeObjectURL(url);
+
+            alert('JSON data exported!');
+        }
+
+        function exportCSV() {
+            let csv = 'Filename,Camera Make,Camera Model,Date/Time,ISO,Aperture,GPS Latitude,GPS Longitude,AI Cluster\n';
+
+            processedImages.forEach(function(img, idx) {
+                const cluster = imageClusters.find(c => c.images.includes(idx));
+                const clusterId = cluster ? (cluster.id + 1) : 'N/A';
+
+                csv += '"' + img.filename + '",';
+                csv += '"' + img.make + '",';
+                csv += '"' + img.model + '",';
+                csv += '"' + img.dateTimeOriginal + '",';
+                csv += img.iso + ',';
+                csv += img.aperture + ',';
+                csv += (img.gps ? img.gps.latitude.toFixed(6) : 'N/A') + ',';
+                csv += (img.gps ? img.gps.longitude.toFixed(6) : 'N/A') + ',';
+                csv += clusterId + '\n';
+            });
+
+            const blob = new Blob([csv], { type: 'text/csv' });
+            const url = URL.createObjectURL(blob);
+            const a = document.createElement('a');
+            a.href = url;
+            a.download = 'EXIF_Analysis_' + Date.now() + '.csv';
+            document.body.appendChild(a);
+            a.click();
+            document.body.removeChild(a);
+            URL.revokeObjectURL(url);
+
+            alert('CSV exported with AI cluster information!');
+        }
+
+        function reset() {
+            location.reload();
+        }
+    </script>
+</body>
+</html>
