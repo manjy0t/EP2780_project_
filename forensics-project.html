@@ -712,7 +712,7 @@
 
             if (withGPS > 1) {
                 const imagesWithGPS = processedImages.filter(img => img.gps);
-                const clusters = clusterByLocation(imagesWithGPS, 1.0);
+                const clusters = clusterByLocation(imagesWithGPS, 0.05);
 
                 const statsPanel = document.getElementById('statsPanel');
                 const clusterInfo = document.createElement('div');
@@ -971,58 +971,83 @@
         }
 
         function createMap() {
-            const imagesWithGPS = processedImages.filter(img => img.gps);
+            const imagesWithGPS = processedImages.filter(img => img.gps && img.gps.latitude && img.gps.longitude);
 
-            if (imagesWithGPS.length === 0) return;
+            console.log('Creating map with', imagesWithGPS.length, 'images with valid GPS');
+
+            if (imagesWithGPS.length === 0) {
+                console.log('No valid GPS data found, skipping map creation');
+                return;
+            }
 
             document.getElementById('map').classList.remove('hidden');
 
-            if (map) map.remove();
+            if (map) {
+                map.remove();
+                markers = [];
+            }
 
-            map = L.map('map').setView([imagesWithGPS[0].gps.latitude, imagesWithGPS[0].gps.longitude], 12);
+            try {
+                const firstImage = imagesWithGPS[0];
+                console.log('Centering map on:', firstImage.gps.latitude, firstImage.gps.longitude);
 
-            L.tileLayer('https://{s}.tile.openstreetmap.org/{z}/{x}/{y}.png', {
-                attribution: '© OpenStreetMap'
-            }).addTo(map);
+                // CHANGED: Higher zoom level to see individual locations
+                map = L.map('map').setView([firstImage.gps.latitude, firstImage.gps.longitude], 17);
 
-            const clusters = clusterByLocation(imagesWithGPS, 1.0);
-
-            clusters.forEach(function(cluster) {
-                const lat = cluster.center.lat;
-                const lon = cluster.center.lon;
-
-                let iconColor = '#667eea';
-                if (cluster.images.length > 5) iconColor = '#e74c3c';
-                else if (cluster.images.length > 2) iconColor = '#f39c12';
-
-                const marker = L.marker([lat, lon], {
-                    icon: L.divIcon({
-                        className: 'custom-marker',
-                        html: '<div style="background: ' + iconColor + '; color: white; border-radius: 50%; width: 30px; height: 30px; display: flex; align-items: center; justify-content: center; font-weight: bold; border: 2px solid white; box-shadow: 0 2px 5px rgba(0,0,0,0.3);">' + cluster.images.length + '</div>',
-                        iconSize: [30, 30]
-                    })
+                L.tileLayer('https://{s}.tile.openstreetmap.org/{z}/{x}/{y}.png', {
+                    attribution: '© OpenStreetMap contributors',
+                    maxZoom: 19
                 }).addTo(map);
 
-                let popupContent = '<div style="max-width: 250px;">';
-                popupContent += '<strong>📍 Location Cluster</strong><br>';
-                popupContent += '<strong>' + cluster.images.length + ' photo(s) at this location</strong><br><br>';
+                // CHANGED: Create individual marker for each image
+                imagesWithGPS.forEach(function(img, idx) {
+                    const lat = img.gps.latitude;
+                    const lon = img.gps.longitude;
 
-                cluster.images.forEach(function(img, idx) {
-                    popupContent += '<div style="margin-bottom: 8px; padding: 5px; background: #f8f9ff; border-radius: 3px;">';
-                    popupContent += '<strong>' + (idx + 1) + '.</strong> ' + img.filename + '<br>';
-                    popupContent += '<small>📷 ' + img.camera + '<br>';
-                    popupContent += '🕐 ' + (img.timestamp ? img.timestamp.toLocaleString() : 'N/A') + '</small>';
+                    if (isNaN(lat) || isNaN(lon)) {
+                        console.warn('Invalid coordinates:', lat, lon);
+                        return;
+                    }
+
+                    // Color code by time sequence
+                    const colors = ['#667eea', '#f093fb', '#4facfe', '#43e97b', '#fa709a', '#fee140', '#30cfd0', '#a8edea', '#ffd89b'];
+                    const iconColor = colors[idx % colors.length];
+
+                    const marker = L.marker([lat, lon], {
+                        icon: L.divIcon({
+                            className: 'custom-marker',
+                            html: '<div style="background: ' + iconColor + '; color: white; border-radius: 50%; width: 30px; height: 30px; display: flex; align-items: center; justify-content: center; font-weight: bold; border: 2px solid white; box-shadow: 0 2px 5px rgba(0,0,0,0.3);">' + (idx + 1) + '</div>',
+                            iconSize: [30, 30]
+                        })
+                    }).addTo(map);
+
+                    let popupContent = '<div style="max-width: 250px;">';
+                    popupContent += '<strong>📷 Photo #' + (idx + 1) + '</strong><br>';
+                    popupContent += '<strong>' + img.filename + '</strong><br><br>';
+                    popupContent += '<small>';
+                    popupContent += '📷 ' + img.camera + '<br>';
+                    popupContent += '🕐 ' + (img.timestamp ? img.timestamp.toLocaleString() : 'N/A') + '<br>';
+                    popupContent += '📍 ' + lat.toFixed(6) + ', ' + lon.toFixed(6);
+                    popupContent += '</small>';
                     popupContent += '</div>';
+
+                    marker.bindPopup(popupContent);
+                    markers.push(marker);
                 });
 
-                popupContent += '</div>';
-                marker.bindPopup(popupContent);
-                markers.push(marker);
-            });
+                // Fit all markers in view
+                if (imagesWithGPS.length > 1) {
+                    const bounds = L.latLngBounds(imagesWithGPS.map(img => [img.gps.latitude, img.gps.longitude]));
+                    map.fitBounds(bounds, {padding: [50, 50]});
+                }
 
-            if (imagesWithGPS.length > 1) {
-                const bounds = L.latLngBounds(imagesWithGPS.map(img => [img.gps.latitude, img.gps.longitude]));
-                map.fitBounds(bounds, {padding: [50, 50]});
+                setTimeout(function() {
+                    map.invalidateSize();
+                }, 100);
+
+            } catch (error) {
+                console.error('Error creating map:', error);
+                document.getElementById('map').innerHTML = '<div style="padding: 20px; text-align: center; color: #f44336;">Error creating map. Check console for details.</div>';
             }
         }
 
